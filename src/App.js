@@ -80,14 +80,32 @@ export default function DictionaryApp() {
     );
   }, [words, searchTerm]);
 
+  // Generar un ID único para esta sesión del navegador
+  const sessionId = useMemo(() => {
+    // Intentar obtener el ID de sessionStorage si ya existe
+    if (typeof window !== 'undefined') {
+      const storedId = sessionStorage.getItem('dictionarySessionId');
+      if (storedId) return storedId;
+      
+      // Si no existe, generar uno nuevo y guardarlo
+      const newId = 'user-' + Math.random().toString(36).substr(2, 9);
+      sessionStorage.setItem('dictionarySessionId', newId);
+      return newId;
+    }
+    return 'unknown-session';
+  }, []);
+
   // Escuchar nuevas palabras en tiempo real
   useEffect(() => {
     const wordsRef = ref(database, 'words');
-    const unsubscribe = onChildAdded(query(wordsRef, orderByChild('timestamp')), (snapshot) => {
+    const wordsQuery = query(wordsRef, orderByChild('timestamp'));
+    
+    // Configurar el listener para nuevas palabras
+    const unsubscribe = onChildAdded(wordsQuery, (snapshot) => {
       const newWord = { id: snapshot.key, ...snapshot.val() };
       
-      // No mostrar notificación si la palabra la agregó el usuario actual
-      if (!editingId && newWord.addedBy !== 'current-user-session') {
+      // No mostrar notificación si la palabra la agregó este usuario
+      if (newWord.addedBy !== sessionId) {
         toast.info(`Nueva palabra agregada: ${newWord.word}`, {
           position: "top-right",
           autoClose: 5000,
@@ -102,9 +120,9 @@ export default function DictionaryApp() {
 
     return () => {
       // Limpiar el listener cuando el componente se desmonte
-      off(wordsRef, 'child_added', unsubscribe);
+      off(wordsQuery, 'child_added', unsubscribe);
     };
-  }, [editingId]);
+  }, [sessionId]);
 
   // Usar debounce para el término de búsqueda
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
@@ -164,7 +182,7 @@ export default function DictionaryApp() {
         word: newWord.trim(),
         meaning: newMeaning.trim(),
         timestamp: Date.now(),
-        addedBy: 'current-user-session', // Identificador único de sesión
+        addedBy: sessionId, // Identificador único de sesión del usuario
         ...(newExample.trim() && { example: newExample.trim() })
       };
 
