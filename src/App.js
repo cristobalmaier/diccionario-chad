@@ -203,7 +203,7 @@ export default function DictionaryApp() {
       setNewExample('');
       setIsModalOpen(false);
     }
-  }, [newWord, newMeaning, newExample, editingId]);
+  }, [newWord, newMeaning, newExample, editingId, sessionId]);
 
   const handleEditWord = useCallback((word) => {
     setEditingId(word.id);
