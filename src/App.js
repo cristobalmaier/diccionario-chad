@@ -1,45 +1,73 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BookOpen, Plus, Search, X } from 'lucide-react';
+import { database, ref, set, onValue, off, remove } from './firebase';
 
 export default function DictionaryApp() {
-  const defaultWords = [
-    { id: 1, word: 'Efímero', meaning: 'Que dura poco tiempo; pasajero, transitorio.' },
-    { id: 2, word: 'Resiliencia', meaning: 'Capacidad de adaptación de un ser vivo frente a un agente perturbador.' },
-    { id: 3, word: 'Serendipia', meaning: 'Hallazgo valioso que se produce de manera accidental o casual.' }
-  ];
-
-  const [words, setWords] = useState(() => {
-    const saved = localStorage.getItem('dictionaryWords');
-    return saved ? JSON.parse(saved) : defaultWords;
-  });
+  const [words, setWords] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [newWord, setNewWord] = useState('');
   const [newMeaning, setNewMeaning] = useState('');
+  const [newExample, setNewExample] = useState('');
 
   const filteredWords = words.filter(item =>
     item.word.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleAddWord = () => {
+  // Cargar palabras desde Firebase al iniciar
+  useEffect(() => {
+    const wordsRef = ref(database, 'words');
+    
+    const handleData = (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const wordsArray = Object.entries(data).map(([id, wordData]) => ({
+          id,
+          ...wordData
+        }));
+        setWords(wordsArray);
+      } else {
+        setWords([]);
+      }
+      setIsLoading(false);
+    };
+
+    // Escuchar cambios en la base de datos
+    onValue(wordsRef, handleData);
+
+    // Limpiar la suscripción al desmontar el componente
+    return () => {
+      off(wordsRef, 'value', handleData);
+    };
+  }, []);
+
+  const handleAddWord = async () => {
     if (newWord.trim() && newMeaning.trim()) {
-      setWords([...words, { 
-        id: Date.now(), 
-        word: newWord.trim(), 
-        meaning: newMeaning.trim() 
-      }]);
+      const newWordRef = ref(database, `words/${Date.now()}`);
+      const wordData = {
+        word: newWord.trim(),
+        meaning: newMeaning.trim(),
+        ...(newExample.trim() && { example: newExample.trim() }) // Solo agrega el ejemplo si existe
+      };
+      
+      await set(newWordRef, wordData);
+      
       setNewWord('');
       setNewMeaning('');
+      setNewExample('');
       setIsModalOpen(false);
     }
   };
 
-  const handleDeleteWord = (id) => {
-    setWords(words.filter(w => w.id !== id));
+  const handleDeleteWord = async (id) => {
+    const wordRef = ref(database, `words/${id}`);
+    await remove(wordRef);
   };
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault(); // Prevenir comportamiento por defecto
       handleAddWord();
     }
   };
@@ -53,7 +81,7 @@ export default function DictionaryApp() {
             <div className="flex items-center gap-3">
               <BookOpen className="w-8 h-8 text-indigo-600" />
               <h1 className="text-3xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-                Diccionario
+                Diccionario Chad
               </h1>
             </div>
             <button
@@ -83,32 +111,50 @@ export default function DictionaryApp() {
 
       {/* Words Grid */}
       <div className="max-w-6xl mx-auto px-4 pb-12">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredWords.map((item, index) => (
-            <div
-              key={item.id}
-              className="bg-white rounded-2xl p-6 shadow-md hover:shadow-xl transition-all transform hover:-translate-y-1 border border-gray-100"
-              style={{
-                animation: `fadeInUp 0.5s ease-out ${index * 0.1}s both`
-              }}
-            >
-              <div className="flex justify-between items-start mb-3">
-                <h3 className="text-xl font-bold text-indigo-600">
-                  {item.word}
-                </h3>
-                <button
-                  onClick={() => handleDeleteWord(item.id)}
-                  className="text-gray-400 hover:text-red-500 transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+        {isLoading ? (
+          <div className="text-center py-12">
+            <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-600"></div>
+            <p className="mt-4 text-gray-600">Cargando palabras...</p>
+          </div>
+        ) : words.length === 0 ? (
+          <div className="text-center py-12">
+            <BookOpen className="w-12 h-12 mx-auto text-gray-400 mb-4" />
+            <p className="text-gray-600">No hay palabras en el diccionario. ¡Sé el primero en agregar una!</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredWords.map((item, index) => (
+              <div
+                key={item.id}
+                className="bg-white rounded-2xl p-6 shadow-md hover:shadow-xl transition-all transform hover:-translate-y-1 border border-gray-100"
+                style={{
+                  animation: `fadeInUp 0.5s ease-out ${index * 0.1}s both`
+                }}
+              >
+                <div className="flex justify-between items-start mb-3">
+                  <h3 className="text-xl font-bold text-indigo-600">
+                    {item.word}
+                  </h3>
+                  <button
+                    onClick={() => handleDeleteWord(item.id)}
+                    className="text-gray-400 hover:text-red-500 transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <p className="text-gray-700 leading-relaxed mb-3">
+                  {item.meaning}
+                </p>
+                {item.example && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <p className="text-sm text-indigo-600 font-medium mb-1">Ejemplo:</p>
+                    <p className="text-gray-600 italic text-sm">"{item.example}"</p>
+                  </div>
+                )}
               </div>
-              <p className="text-gray-700 leading-relaxed">
-                {item.meaning}
-              </p>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
 
         {filteredWords.length === 0 && (
           <div className="text-center py-12">
@@ -155,7 +201,7 @@ export default function DictionaryApp() {
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Significado
+                  Significado *
                 </label>
                 <textarea
                   value={newMeaning}
@@ -163,7 +209,22 @@ export default function DictionaryApp() {
                   onKeyPress={handleKeyPress}
                   className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-indigo-500 focus:outline-none transition-all resize-none"
                   placeholder="Describe el significado..."
-                  rows="4"
+                  rows="3"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Ejemplo (opcional)
+                </label>
+                <textarea
+                  value={newExample}
+                  onChange={(e) => setNewExample(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-indigo-500 focus:outline-none transition-all resize-none"
+                  placeholder="Agrega un ejemplo de uso..."
+                  rows="2"
                 />
               </div>
 
@@ -174,7 +235,7 @@ export default function DictionaryApp() {
               >
                 Agregar
               </button>
-              <p className="text-xs text-gray-500 text-center">Presiona Ctrl + Enter para agregar</p>
+              <p className="text-xs text-gray-500 text-center">* Campos obligatorios | Presiona Ctrl + Enter para agregar</p>
             </div>
           </div>
         </div>
