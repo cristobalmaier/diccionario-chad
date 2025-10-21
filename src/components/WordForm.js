@@ -1,5 +1,4 @@
 import React, { memo } from 'react';
-import { X } from 'lucide-react';
 
 const WordForm = memo(({ 
   editingId, 
