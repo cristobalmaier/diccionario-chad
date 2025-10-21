@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense, useRef } from 'react';
 import { BookOpen, Plus, Search, X } from 'lucide-react';
 import { database, ref, set, onValue, off, remove } from './firebase';
-import { query, orderByChild, startAt, endAt } from 'firebase/database';
+import { query, orderByChild, startAt, endAt, onChildAdded } from 'firebase/database';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
 // Componentes cargados bajo demanda con prefetching
 const WordCard = lazy(() => import(/* webpackPrefetch: true */ './components/WordCard'));
@@ -78,6 +80,32 @@ export default function DictionaryApp() {
     );
   }, [words, searchTerm]);
 
+  // Escuchar nuevas palabras en tiempo real
+  useEffect(() => {
+    const wordsRef = ref(database, 'words');
+    const unsubscribe = onChildAdded(query(wordsRef, orderByChild('timestamp')), (snapshot) => {
+      const newWord = { id: snapshot.key, ...snapshot.val() };
+      
+      // No mostrar notificación si la palabra la agregó el usuario actual
+      if (!editingId && newWord.addedBy !== 'current-user-session') {
+        toast.info(`Nueva palabra agregada: ${newWord.word}`, {
+          position: "top-right",
+          autoClose: 5000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+          progress: undefined,
+        });
+      }
+    });
+
+    return () => {
+      // Limpiar el listener cuando el componente se desmonte
+      off(wordsRef, 'child_added', unsubscribe);
+    };
+  }, [editingId]);
+
   // Usar debounce para el término de búsqueda
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
   
@@ -135,6 +163,8 @@ export default function DictionaryApp() {
       const wordData = {
         word: newWord.trim(),
         meaning: newMeaning.trim(),
+        timestamp: Date.now(),
+        addedBy: 'current-user-session', // Identificador único de sesión
         ...(newExample.trim() && { example: newExample.trim() })
       };
 
@@ -246,6 +276,17 @@ export default function DictionaryApp() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-100">
+      <ToastContainer
+        position="top-right"
+        autoClose={5000}
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+      />
       {/* Header */}
       {MemoizedHeader}
 
