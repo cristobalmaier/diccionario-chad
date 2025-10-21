@@ -95,6 +95,9 @@ export default function DictionaryApp() {
     return 'unknown-session';
   }, []);
 
+  // Variable para rastrear si es la carga inicial
+  const initialLoad = useRef(true);
+
   // Escuchar nuevas palabras en tiempo real
   useEffect(() => {
     const wordsRef = ref(database, 'words');
@@ -104,8 +107,8 @@ export default function DictionaryApp() {
     const unsubscribe = onChildAdded(wordsQuery, (snapshot) => {
       const newWord = { id: snapshot.key, ...snapshot.val() };
       
-      // No mostrar notificación si la palabra la agregó este usuario
-      if (newWord.addedBy !== sessionId) {
+      // Solo mostrar notificación si no es la carga inicial y es una palabra nueva de otro usuario
+      if (!initialLoad.current && newWord.addedBy !== sessionId) {
         toast.info(`Nueva palabra agregada: ${newWord.word}`, {
           position: "top-right",
           autoClose: 5000,
@@ -114,9 +117,22 @@ export default function DictionaryApp() {
           pauseOnHover: true,
           draggable: true,
           progress: undefined,
+          transition: 'bounce',
+          icon: '📝',
+          className: 'animate-bounce-once'
         });
       }
     });
+
+    // Marcar que la carga inicial ha terminado después de 2 segundos
+    const timer = setTimeout(() => {
+      initialLoad.current = false;
+    }, 2000);
+
+    return () => {
+      clearTimeout(timer);
+      off(wordsQuery, 'child_added', unsubscribe);
+    };
 
     return () => {
       // Limpiar el listener cuando el componente se desmonte
@@ -178,13 +194,19 @@ export default function DictionaryApp() {
   // Memoizar las funciones de manejo
   const handleAddWord = useCallback(async () => {
     if (newWord.trim() && newMeaning.trim()) {
-      const wordData = {
-        word: newWord.trim(),
-        meaning: newMeaning.trim(),
-        timestamp: Date.now(),
-        addedBy: sessionId, // Identificador único de sesión del usuario
-        ...(newExample.trim() && { example: newExample.trim() })
-      };
+      // Animación de carga
+      const toastId = toast.loading('Agregando palabra...', {
+        position: "top-right"
+      });
+
+      try {
+        const wordData = {
+          word: newWord.trim(),
+          meaning: newMeaning.trim(),
+          timestamp: Date.now(),
+          addedBy: sessionId,
+          ...(newExample.trim() && { example: newExample.trim() })
+        };
 
       if (editingId) {
         // Actualizar palabra existente
@@ -197,11 +219,31 @@ export default function DictionaryApp() {
         await set(newWordRef, wordData);
       }
       
-      // Limpiar el formulario
-      setNewWord('');
-      setNewMeaning('');
-      setNewExample('');
-      setIsModalOpen(false);
+        // Mostrar notificación de éxito
+        toast.update(toastId, {
+          render: '¡Palabra agregada!',
+          type: 'success',
+          isLoading: false,
+          autoClose: 3000,
+          closeButton: true,
+          transition: 'bounce'
+        });
+
+        // Limpiar el formulario
+        setNewWord('');
+        setNewMeaning('');
+        setNewExample('');
+        setIsModalOpen(false);
+      } catch (error) {
+        // Mostrar notificación de error
+        toast.update(toastId, {
+          render: 'Error al agregar la palabra',
+          type: 'error',
+          isLoading: false,
+          autoClose: 3000
+        });
+        console.error('Error al agregar palabra:', error);
+      }
     }
   }, [newWord, newMeaning, newExample, editingId, sessionId]);
 
@@ -215,8 +257,31 @@ export default function DictionaryApp() {
 
   const handleDeleteWord = useCallback(async (id) => {
     if (window.confirm('¿Estás seguro de que quieres eliminar esta palabra?')) {
-      const wordRef = ref(database, `words/${id}`);
-      await remove(wordRef);
+      const toastId = toast.loading('Eliminando palabra...', {
+        position: "top-right"
+      });
+
+      try {
+        const wordRef = ref(database, `words/${id}`);
+        await remove(wordRef);
+        
+        toast.update(toastId, {
+          render: 'Palabra eliminada',
+          type: 'success',
+          isLoading: false,
+          autoClose: 3000,
+          closeButton: true,
+          transition: 'bounce'
+        });
+      } catch (error) {
+        toast.update(toastId, {
+          render: 'Error al eliminar la palabra',
+          type: 'error',
+          isLoading: false,
+          autoClose: 3000
+        });
+        console.error('Error al eliminar palabra:', error);
+      }
     }
   }, []);
 
@@ -294,7 +359,20 @@ export default function DictionaryApp() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-100">
+      <style jsx global>{`
+        @keyframes bounce-once {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-10px); }
+        }
+        .animate-bounce-once {
+          animation: bounce-once 0.5s ease-in-out;
+        }
+        .Toastify__bounce-enter--top-right {
+          animation: bounce-in-right 0.7s;
+        }
+      `}</style>
       <ToastContainer
+        toastClassName={() => 'relative flex p-1 mb-2 min-h-10 rounded-md justify-between overflow-hidden cursor-pointer bg-white shadow-lg'}
         position="top-right"
         autoClose={5000}
         hideProgressBar={false}
