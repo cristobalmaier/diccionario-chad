@@ -1,5 +1,27 @@
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, set, onValue, off, remove } from 'firebase/database';
+import { 
+  getDatabase, 
+  ref, 
+  set, 
+  onValue, 
+  off, 
+  remove, 
+  update, 
+  query, 
+  orderByChild, 
+  startAt, 
+  endAt, 
+  push, 
+  onChildAdded,
+  get 
+} from 'firebase/database';
+import { 
+  getAuth, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged 
+} from 'firebase/auth';
 
 // Configuración de Firebase
 const firebaseConfig = {
@@ -15,5 +37,26 @@ const firebaseConfig = {
 // Inicializar Firebase
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
+const auth = getAuth(app);
 
-export { database, ref, set, onValue, off, remove };
+export { 
+  database, 
+  auth, 
+  ref, 
+  set, 
+  onValue, 
+  off, 
+  remove, 
+  update,
+  get,
+  query,
+  orderByChild,
+  startAt,
+  endAt,
+  push,
+  onChildAdded,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged
+};

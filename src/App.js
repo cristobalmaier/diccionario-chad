@@ -1,11 +1,33 @@
 import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense, useRef } from 'react';
-import { BookOpen, Plus, Search, X } from 'lucide-react';
-import { database, ref, set, onValue, off, remove } from './firebase';
-import { query, orderByChild, startAt, endAt, onChildAdded } from 'firebase/database';
-import { ToastContainer, toast } from 'react-toastify';
+import { AlertTriangle, BookOpen, Plus, Search, LogOut, XCircle } from 'lucide-react';
+import { 
+  auth, 
+  database, 
+  ref, 
+  onValue, 
+  off, 
+  set, 
+  remove, 
+  query, 
+  orderByChild, 
+  startAt, 
+  endAt, 
+  update, 
+  push, 
+  onChildAdded,
+  signOut,
+  onAuthStateChanged,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  get
+} from './firebase';
+import { updateProfile } from 'firebase/auth';
+
+import { toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
 // Componentes cargados bajo demanda con prefetching
+const Auth = lazy(() => import('./components/auth/Auth'));
 const WordCard = lazy(() => import(/* webpackPrefetch: true */ './components/WordCard'));
 const WordForm = lazy(() => import(/* webpackPrefetch: true */ './components/WordForm'));
 
@@ -27,7 +49,7 @@ class ErrorBoundary extends React.Component {
         <div className="bg-red-50 border-l-4 border-red-400 p-4 my-4">
           <div className="flex">
             <div className="flex-shrink-0">
-              <X className="h-5 w-5 text-red-400" />
+              <AlertTriangle className="h-5 w-5 text-red-400" />
             </div>
             <div className="ml-3">
               <p className="text-sm text-red-700">
@@ -68,6 +90,8 @@ export default function DictionaryApp() {
   const [newWord, setNewWord] = useState('');
   const [newMeaning, setNewMeaning] = useState('');
   const [newExample, setNewExample] = useState('');
+  const [user, setUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
   // Memoizar la lista filtrada para evitar recálculos innecesarios
   const filteredWords = useMemo(() => {
@@ -80,19 +104,90 @@ export default function DictionaryApp() {
     );
   }, [words, searchTerm]);
 
-  // Generar un ID único para esta sesión del navegador
+  // Manejar el estado de autenticación
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        // Asegurarse de que el usuario tenga la información más reciente
+        await user.reload();
+        
+        // Si el usuario no tiene displayName, usar el correo sin el dominio
+        if (!user.displayName && user.email) {
+          const usernameFromEmail = user.email.split('@')[0];
+          await updateProfile(user, {
+            displayName: usernameFromEmail
+          });
+        }
+        
+        // Forzar el uso del displayName
+        const displayName = user.displayName || user.email?.split('@')[0] || 'Anónimo';
+        setUser({
+          ...user,
+          displayName: displayName
+        });
+      } else {
+        setUser(null);
+      }
+      setAuthChecked(true);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Usar el UID del usuario como sessionId
   const sessionId = useMemo(() => {
-    // Intentar obtener el ID de sessionStorage si ya existe
+    if (user) return user.uid;
+    
+    // Si no hay usuario autenticado, usar un ID de sesión temporal
     if (typeof window !== 'undefined') {
       const storedId = sessionStorage.getItem('dictionarySessionId');
       if (storedId) return storedId;
       
-      // Si no existe, generar uno nuevo y guardarlo
-      const newId = 'user-' + Math.random().toString(36).substr(2, 9);
+      const newId = 'temp-' + Math.random().toString(36).substr(2, 9);
       sessionStorage.setItem('dictionarySessionId', newId);
       return newId;
     }
     return 'unknown-session';
+  }, [user]);
+
+  // Manejar cierre de sesión
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('Error al cerrar sesión:', error);
+    }
+  };
+
+  const handleSignUp = useCallback(async (email, password, displayName) => {
+    try {
+      // Crear el usuario con correo y contraseña
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      
+      // Actualizar el perfil del usuario con el nombre de pantalla
+      await updateProfile(userCredential.user, {
+        displayName: displayName
+      });
+      
+      // Guardar información adicional del usuario en la base de datos
+      const userRef = ref(database, `users/${userCredential.user.uid}`);
+      await set(userRef, {
+        displayName: displayName,
+        email: email,
+        createdAt: Date.now()
+      });
+      
+      // Actualizar el estado del usuario actual
+      setUser({
+        ...userCredential.user,
+        displayName: displayName
+      });
+      
+      return userCredential.user;
+    } catch (error) {
+      console.error('Error al registrar usuario:', error);
+      throw error;
+    }
   }, []);
 
   // Variable para rastrear si es la carga inicial
@@ -107,7 +202,7 @@ export default function DictionaryApp() {
     const unsubscribe = onChildAdded(wordsQuery, (snapshot) => {
       const newWord = { id: snapshot.key, ...snapshot.val() };
       
-      // Solo mostrar notificación si no es la carga inicial y es una palabra nueva de otro usuario
+      // Mostrar notificación cuando otro usuario agregue una palabra
       if (!initialLoad.current && newWord.addedBy !== sessionId) {
         toast.info(`Nueva palabra agregada: ${newWord.word}`, {
           position: "top-right",
@@ -194,40 +289,38 @@ export default function DictionaryApp() {
   // Memoizar las funciones de manejo
   const handleAddWord = useCallback(async () => {
     if (newWord.trim() && newMeaning.trim()) {
-      // Animación de carga
-      const toastId = toast.loading('Agregando palabra...', {
-        position: "top-right"
-      });
-
       try {
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          throw new Error('No hay usuario autenticado');
+        }
+        
+        // Asegurarse de tener la información más reciente del usuario
+        await currentUser.reload();
+        
         const wordData = {
           word: newWord.trim(),
           meaning: newMeaning.trim(),
           timestamp: Date.now(),
-          addedBy: sessionId,
+          updatedAt: Date.now(),
           ...(newExample.trim() && { example: newExample.trim() })
         };
 
-      if (editingId) {
-        // Actualizar palabra existente
-        const wordRef = ref(database, `words/${editingId}`);
-        await set(wordRef, wordData);
-        setEditingId(null);
+        if (editingId) {
+          // Actualizar palabra existente
+          const wordRef = ref(database, `words/${editingId}`);
+          await update(wordRef, {
+            ...wordData,
+            updatedAt: Date.now()
+          });
+          setEditingId(null);
       } else {
         // Crear nueva palabra
-        const newWordRef = ref(database, `words/${Date.now()}`);
+        const newWordRef = push(ref(database, 'words'));
         await set(newWordRef, wordData);
       }
       
-        // Mostrar notificación de éxito
-        toast.update(toastId, {
-          render: '¡Palabra agregada!',
-          type: 'success',
-          isLoading: false,
-          autoClose: 3000,
-          closeButton: true,
-          transition: 'bounce'
-        });
+        // Notificación de éxito deshabilitada
 
         // Limpiar el formulario
         setNewWord('');
@@ -235,17 +328,11 @@ export default function DictionaryApp() {
         setNewExample('');
         setIsModalOpen(false);
       } catch (error) {
-        // Mostrar notificación de error
-        toast.update(toastId, {
-          render: 'Error al agregar la palabra',
-          type: 'error',
-          isLoading: false,
-          autoClose: 3000
-        });
+        // Notificación de error deshabilitada
         console.error('Error al agregar palabra:', error);
       }
     }
-  }, [newWord, newMeaning, newExample, editingId, sessionId]);
+  }, [newWord, newMeaning, newExample, editingId]);
 
   const handleEditWord = useCallback((word) => {
     setEditingId(word.id);
@@ -257,29 +344,15 @@ export default function DictionaryApp() {
 
   const handleDeleteWord = useCallback(async (id) => {
     if (window.confirm('¿Estás seguro de que quieres eliminar esta palabra?')) {
-      const toastId = toast.loading('Eliminando palabra...', {
-        position: "top-right"
-      });
+      // Notificación de carga de eliminación deshabilitada
 
       try {
         const wordRef = ref(database, `words/${id}`);
         await remove(wordRef);
         
-        toast.update(toastId, {
-          render: 'Palabra eliminada',
-          type: 'success',
-          isLoading: false,
-          autoClose: 3000,
-          closeButton: true,
-          transition: 'bounce'
-        });
+        // Notificación de eliminación exitosa deshabilitada
       } catch (error) {
-        toast.update(toastId, {
-          render: 'Error al eliminar la palabra',
-          type: 'error',
-          isLoading: false,
-          autoClose: 3000
-        });
+        // Notificación de error al eliminar deshabilitada
         console.error('Error al eliminar palabra:', error);
       }
     }
@@ -331,13 +404,37 @@ export default function DictionaryApp() {
               Diccionario Chad
             </h1>
           </div>
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-700 hover:bg-blue-800 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg sm:rounded-full transition-all transform hover:scale-[1.02] active:scale-95 shadow-md hover:shadow-lg"
-          >
-            <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span className="text-sm sm:text-base font-medium">Nueva Palabra</span>
-          </button>
+          
+          {/* Sección de información del usuario oculta
+          {user && (
+            <div className="hidden sm:block text-sm text-gray-600">
+              Conectado como <span className="font-medium">{user.email}</span>
+            </div>
+          )}
+          */}
+          
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="flex-1 sm:flex-none">
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-700 hover:bg-blue-800 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg sm:rounded-full transition-all transform hover:scale-[1.02] active:scale-95 shadow-md hover:shadow-lg"
+              >
+                <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span className="text-sm sm:text-base font-medium">Nueva Palabra</span>
+              </button>
+            </div>
+            
+            <div className="flex-shrink-0">
+              <button
+                onClick={handleSignOut}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-red-700 hover:bg-red-800 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg sm:rounded-full transition-all transform hover:scale-[1.02] active:scale-95 shadow-md hover:shadow-lg"
+              >
+                <LogOut className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span className="text-sm sm:text-base font-medium">Cerrar Sesión</span>
+              </button>
+            </div>
+          </div>
+          
         </div>
       </div>
     </header>
@@ -357,6 +454,28 @@ export default function DictionaryApp() {
     };
   }, [handleEditWord, handleDeleteWord]);
 
+  // Mostrar pantalla de carga mientras se verifica la autenticación
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-700"></div>
+      </div>
+    );
+  }
+
+  // Mostrar el componente de autenticación si el usuario no está autenticado
+  if (!user) {
+    return (
+      <Suspense fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-700"></div>
+        </div>
+      }>
+        <Auth onAuthSuccess={() => setIsModalOpen(false)} />
+      </Suspense>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-100">
       <style jsx global>{`
@@ -367,22 +486,8 @@ export default function DictionaryApp() {
         .animate-bounce-once {
           animation: bounce-once 0.5s ease-in-out;
         }
-        .Toastify__bounce-enter--top-right {
-          animation: bounce-in-right 0.7s;
-        }
+        /* Estilos de notificación eliminados */
       `}</style>
-      <ToastContainer
-        toastClassName={() => 'relative flex p-1 mb-2 min-h-10 rounded-md justify-between overflow-hidden cursor-pointer bg-white shadow-lg'}
-        position="top-right"
-        autoClose={5000}
-        hideProgressBar={false}
-        newestOnTop={false}
-        closeOnClick
-        rtl={false}
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-      />
       {/* Header */}
       {MemoizedHeader}
 
@@ -413,7 +518,7 @@ export default function DictionaryApp() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 w-full">
               {filteredWords.map((item, index) => (
                 <ErrorBoundary key={item.id}>
                   <WordCard 
@@ -470,7 +575,7 @@ export default function DictionaryApp() {
                 className="text-gray-400 hover:text-gray-600 transition-colors p-1 -mr-2"
                 aria-label="Cerrar"
               >
-                <X className="w-6 h-6" />
+                <XCircle className="w-6 h-6" />
               </button>
             </div>
 

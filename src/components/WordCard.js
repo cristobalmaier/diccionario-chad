@@ -4,7 +4,7 @@ import { X } from 'lucide-react';
 const WordCard = memo(({ item, onEdit, onDelete }) => {
   return (
     <div 
-      className="bg-white/90 backdrop-blur-sm rounded-xl p-5 sm:p-6 shadow-sm hover:shadow-lg transition-all duration-200 border border-gray-100 hover:border-blue-100"
+      className="bg-white/90 backdrop-blur-sm rounded-xl p-6 sm:p-8 shadow-sm hover:shadow-lg transition-all duration-200 border border-gray-100 hover:border-blue-100 relative w-full max-w-md mx-auto"
     >
       <div className="flex justify-between items-start gap-3 mb-3">
         <h3 className="text-lg font-bold text-blue-800 line-clamp-2">
