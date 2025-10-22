@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense, useRef } from 'react';
 // Importamos BrowserRouter para usarlo como componente principal
 import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom'; 
-import { AlertTriangle, BookOpen, Plus, LogOut, XCircle, Shield, Search } from 'lucide-react';
+import { AlertTriangle, BookOpen, Plus, LogOut, XCircle, Shield, Search, Trash2 } from 'lucide-react';
 import SearchInput from './components/SearchInput';
+import DeleteConfirmationModal from './components/DeleteConfirmationModal';
 import { 
   auth, 
   database, 
@@ -90,6 +91,11 @@ function DictionaryLogic() {
   const [words, setWords] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [deleteModal, setDeleteModal] = useState({
+    isOpen: false,
+    wordId: null,
+    wordText: ''
+  });
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [newWord, setNewWord] = useState('');
@@ -469,17 +475,34 @@ function DictionaryLogic() {
     setIsModalOpen(true);
   }, []);
 
-  const handleDeleteWord = useCallback(async (id) => {
-    if (window.confirm('¿Estás seguro de que quieres eliminar esta palabra? Esta acción es permanente.')) {
-      try {
-        const wordRef = ref(database, `words/${id}`);
-        await remove(wordRef);
-        toast.success('Palabra eliminada con éxito.', { transition: Bounce });
-      } catch (error) {
-        console.error('Error al eliminar palabra:', error);
-        toast.error('Error al eliminar palabra.', { transition: Bounce });
-      }
+  // Manejar solicitud de eliminación
+  const handleDeleteClick = useCallback((id, word) => {
+    setDeleteModal({
+      isOpen: true,
+      wordId: id,
+      wordText: word
+    });
+  }, []);
+
+  // Confirmar eliminación de palabra
+  const confirmDelete = useCallback(async () => {
+    if (!user || !deleteModal.wordId) return;
+    
+    try {
+      const wordRef = ref(database, `words/${deleteModal.wordId}`);
+      await remove(wordRef);
+      toast.success('Palabra eliminada con éxito.', { transition: Bounce });
+    } catch (error) {
+      console.error('Error al eliminar la palabra:', error);
+      toast.error('Error al eliminar la palabra. Intenta de nuevo.');
+    } finally {
+      setDeleteModal({ isOpen: false, wordId: null, wordText: '' });
     }
+  }, [user, deleteModal.wordId]);
+
+  // Cancelar eliminación
+  const cancelDelete = useCallback(() => {
+    setDeleteModal({ isOpen: false, wordId: null, wordText: '' });
   }, []);
 
   const resetForm = useCallback(() => {
@@ -558,10 +581,10 @@ function DictionaryLogic() {
   ), [handleSignOut, isAdmin, user]); 
 
   // Usar useRef para mantener una referencia estable a las funciones
-  const memoizedHandlers = useRef({ handleEditWord, handleDeleteWord });
+  const memoizedHandlers = useRef({ handleEditWord, handleDeleteClick });
   useEffect(() => {
-    memoizedHandlers.current = { handleEditWord, handleDeleteWord };
-  }, [handleEditWord, handleDeleteWord]);
+    memoizedHandlers.current = { handleEditWord, handleDeleteClick };
+  }, [handleEditWord, handleDeleteClick]);
   
   // Agregar event listener para Ctrl+Enter
   useEffect(() => {
@@ -628,7 +651,7 @@ function DictionaryLogic() {
                   <WordCard 
                     item={item} 
                     onEdit={memoizedHandlers.current.handleEditWord} 
-                    onDelete={memoizedHandlers.current.handleDeleteWord}
+                    onDelete={memoizedHandlers.current.handleDeleteClick}
                     userIsAdmin={isAdmin} 
                     currentUserId={user?.uid} 
                     style={{ 
@@ -642,6 +665,17 @@ function DictionaryLogic() {
           )}
         </Suspense>
       </div>
+
+      {/* Modal de confirmación de eliminación */}
+      <DeleteConfirmationModal
+        isOpen={deleteModal.isOpen}
+        onClose={cancelDelete}
+        onConfirm={confirmDelete}
+        title="¿Eliminar palabra?"
+        message={`¿Estás seguro de que quieres eliminar la palabra "${deleteModal.wordText}"? Esta acción no se puede deshacer.`}
+        confirmText="Eliminar"
+        cancelText="Cancelar"
+      />
     </>
   );
 

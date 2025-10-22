@@ -28,7 +28,7 @@ const WordCard = memo(({ item, onEdit, onDelete }) => {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete(item.id);
+                onDelete(item.id, item.word);
               }}
               className="text-gray-400 hover:text-red-500 transition-colors p-1.5 rounded-full hover:bg-red-50"
               title="Eliminar"
