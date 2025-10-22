@@ -125,7 +125,8 @@ function DictionaryLogic() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        let displayName = user.displayName;
+        // Usar el displayName del perfil de autenticación o 'Usuario' como valor por defecto
+        let displayName = user.displayName || 'Usuario';
         const IS_ADMIN_EMAIL = 'admin@gmail.com';
         const isUserAdmin = user.email === IS_ADMIN_EMAIL;
         
@@ -136,46 +137,26 @@ function DictionaryLogic() {
           
           if (userSnapshot.exists()) {
             userData = userSnapshot.val();
-            // Usar el displayName de la base de datos si existe
-            if (userData.displayName) {
+            // Si hay un displayName en la base de datos, usarlo y actualizar el perfil de autenticación si es necesario
+            if (userData.displayName && userData.displayName !== displayName) {
               displayName = userData.displayName;
-              // Actualizar el perfil de autenticación si es necesario
-              if (user.displayName !== displayName) {
-                await updateProfile(user, { displayName });
-              }
-            } else if (!displayName && user.email) {
-              // Si no hay displayName, usar el email sin el dominio
-              displayName = user.email.split('@')[0];
               await updateProfile(user, { displayName });
-              // Actualizar también en la base de datos
-              await update(userRef, { 
-                displayName,
-                lastLogin: Date.now()
-              });
             }
-          } else if (!displayName && user.email) {
-            // Si no existe en la base de datos, crear el registro
-            displayName = user.email.split('@')[0];
-            await updateProfile(user, { displayName });
+            
+            // Actualizar última conexión
+            await update(userRef, {
+              lastLogin: Date.now(),
+              email: user.email
+              // No sobrescribir el displayName existente
+            });
+          } else {
+            // Si no existe en la base de datos, crear el registro con el displayName del perfil
             const newUserData = {
               uid: user.uid,
-              displayName,
+              displayName: displayName,
               email: user.email,
               isVerified: false,
               isAdmin: isUserAdmin,
-              createdAt: Date.now(),
-              lastLogin: Date.now()
-            };
-            await set(userRef, newUserData);
-            userData = newUserData;
-          } else if (!displayName) {
-            displayName = 'Anónimo';
-            await updateProfile(user, { displayName });
-            const newUserData = {
-              uid: user.uid,
-              displayName,
-              isVerified: false,
-              isAdmin: false,
               createdAt: Date.now(),
               lastLogin: Date.now()
             };
@@ -186,7 +167,7 @@ function DictionaryLogic() {
           // Actualizar el estado del usuario
           setUser({
             ...user,
-            displayName,
+            displayName: displayName,
             isAdmin: isUserAdmin,
             isVerified: userData.isVerified || false
           });
@@ -614,6 +595,7 @@ function DictionaryLogic() {
             value={searchTerm}
             onChange={handleSearch}
             placeholder="Buscar palabras o significados..."
+            autoFocus={!isModalOpen}
           />
         </div>
       </div>

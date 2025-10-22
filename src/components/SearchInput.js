@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search } from 'lucide-react';
 
-const SearchInput = ({ value = '', onChange, placeholder = 'Buscar...' }) => {
+const SearchInput = ({ value = '', onChange, placeholder = 'Buscar...', autoFocus = false }) => {
   const [searchValue, setSearchValue] = useState(value);
   const inputRef = useRef(null);
 
@@ -19,12 +19,12 @@ const SearchInput = ({ value = '', onChange, placeholder = 'Buscar...' }) => {
     }
   };
 
-  // Enfocar el input al montar
+  // Solo enfocar si autoFocus es true
   useEffect(() => {
-    if (inputRef.current) {
+    if (autoFocus && inputRef.current) {
       inputRef.current.focus();
     }
-  }, []);
+  }, [autoFocus]);
 
   return (
     <div className="relative w-full">

@@ -14,20 +14,38 @@ const WordForm = memo(({
 }) => {
   return (
     <div className="space-y-5">
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
+      <div className="relative group">
+        <label htmlFor="word-input" className="block text-sm font-medium text-gray-700 mb-2 transition-colors duration-200 group-focus-within:text-blue-600">
           Palabra / Frase <span className="text-red-500">*</span>
         </label>
         <div className="relative">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <svg className="h-5 w-5 text-gray-400 group-focus-within:text-blue-500 transition-colors duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+          </div>
           <input
+            id="word-input"
             type="text"
             value={newWord}
             onChange={(e) => setNewWord(e.target.value)}
             onKeyPress={handleKeyPress}
-            className="w-full px-4 py-3 text-gray-900 rounded-xl border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all text-base"
+            className="w-full pl-10 pr-4 py-3 text-gray-900 rounded-xl border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all text-base bg-white/90 hover:bg-white focus:bg-white"
             placeholder="Ej: Sublime"
             autoFocus
           />
+          {newWord && (
+            <button
+              type="button"
+              onClick={() => setNewWord('')}
+              className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 focus:outline-none transition-colors"
+              aria-label="Limpiar campo"
+            >
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 

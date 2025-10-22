@@ -1,7 +1,19 @@
-import React, { memo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { X } from 'lucide-react';
 
 const WordCard = memo(({ item, onEdit, onDelete }) => {
+  // Función para obtener el nombre de usuario del displayName o email
+  const getDisplayName = (name) => {
+    if (!name) return 'Usuario';
+    // Si es un email, devolver solo la parte antes del @
+    if (name.includes('@')) {
+      return name.split('@')[0];
+    }
+    return name;
+  };
+
+  const modifiedByName = useMemo(() => getDisplayName(item.modifiedByName), [item.modifiedByName]);
+  const addedByName = useMemo(() => getDisplayName(item.addedByName), [item.addedByName]);
   return (
     <div 
       className="bg-white/90 backdrop-blur-sm rounded-xl p-6 sm:p-8 shadow-sm hover:shadow-lg transition-all duration-200 border border-gray-100 hover:border-blue-100 relative w-full max-w-md mx-auto flex flex-col h-full group"
@@ -55,14 +67,14 @@ const WordCard = memo(({ item, onEdit, onDelete }) => {
               <>
                 <span className="text-xs text-gray-500">Modificado por:</span>
                 <span className="text-xs font-medium text-blue-600 ml-1">
-                  {item.modifiedByName}
+                  {modifiedByName}
                 </span>
               </>
             ) : item.addedByName ? (
               <>
                 <span className="text-xs text-gray-500">Agregado por:</span>
                 <span className="text-xs font-medium text-blue-600 ml-1">
-                  {item.addedByName}
+                  {addedByName}
                 </span>
               </>
             ) : null}
