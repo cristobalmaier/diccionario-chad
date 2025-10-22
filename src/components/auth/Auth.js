@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { auth } from '../../firebase';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { auth, database } from '../../firebase';
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  updateProfile 
+} from 'firebase/auth';
+import { ref, set } from 'firebase/database';
 import { BookOpen, Mail, Lock, User, Eye, EyeOff, Loader2 } from 'lucide-react';
 
 export default function Auth({ onAuthSuccess }) {
@@ -72,10 +77,26 @@ export default function Auth({ onAuthSuccess }) {
         await signInWithEmailAndPassword(auth, formData.email, formData.password);
       } else {
         // Registrarse
-        await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+        const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+        // Actualizar el perfil del usuario con el displayName
+        await updateProfile(userCredential.user, {
+          displayName: formData.displayName.trim()
+        });
+        
+        // Guardar la información adicional del usuario en la base de datos
+        const userRef = ref(database, `users/${userCredential.user.uid}`);
+        await set(userRef, {
+          displayName: formData.displayName.trim(),
+          email: formData.email,
+          isVerified: false,
+          isAdmin: false,
+          createdAt: Date.now(),
+          lastLogin: Date.now()
+        });
       }
       onAuthSuccess();
     } catch (err) {
+      
       // Manejar errores específicos de Firebase
       if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         setError('Correo o contraseña incorrectos');

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense, useRef } from 'react';
 // Importamos BrowserRouter para usarlo como componente principal
 import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom'; 
-import { AlertTriangle, BookOpen, Plus, Search, LogOut, XCircle, Shield } from 'lucide-react';
+import { AlertTriangle, BookOpen, Plus, LogOut, XCircle, Shield, Search } from 'lucide-react';
+import SearchInput from './components/SearchInput';
 import { 
   auth, 
   database, 
@@ -119,20 +120,88 @@ function DictionaryLogic() {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         let displayName = user.displayName;
-        if (!user.displayName && user.email) {
-          displayName = user.email.split('@')[0];
-          try {
-            await updateProfile(user, { displayName });
-          } catch (error) {
-            console.error('Error al actualizar displayName:', error);
-          }
-        } else if (!user.displayName && !user.email) {
-          displayName = 'Anónimo';
-        }
-        
         const IS_ADMIN_EMAIL = 'admin@gmail.com';
         const isUserAdmin = user.email === IS_ADMIN_EMAIL;
-        setIsAdmin(isUserAdmin);
+        
+        try {
+          const userRef = ref(database, `users/${user.uid}`);
+          const userSnapshot = await get(userRef);
+          let userData = {};
+          
+          if (userSnapshot.exists()) {
+            userData = userSnapshot.val();
+            // Usar el displayName de la base de datos si existe
+            if (userData.displayName) {
+              displayName = userData.displayName;
+              // Actualizar el perfil de autenticación si es necesario
+              if (user.displayName !== displayName) {
+                await updateProfile(user, { displayName });
+              }
+            } else if (!displayName && user.email) {
+              // Si no hay displayName, usar el email sin el dominio
+              displayName = user.email.split('@')[0];
+              await updateProfile(user, { displayName });
+              // Actualizar también en la base de datos
+              await update(userRef, { 
+                displayName,
+                lastLogin: Date.now()
+              });
+            }
+          } else if (!displayName && user.email) {
+            // Si no existe en la base de datos, crear el registro
+            displayName = user.email.split('@')[0];
+            await updateProfile(user, { displayName });
+            const newUserData = {
+              uid: user.uid,
+              displayName,
+              email: user.email,
+              isVerified: false,
+              isAdmin: isUserAdmin,
+              createdAt: Date.now(),
+              lastLogin: Date.now()
+            };
+            await set(userRef, newUserData);
+            userData = newUserData;
+          } else if (!displayName) {
+            displayName = 'Anónimo';
+            await updateProfile(user, { displayName });
+            const newUserData = {
+              uid: user.uid,
+              displayName,
+              isVerified: false,
+              isAdmin: false,
+              createdAt: Date.now(),
+              lastLogin: Date.now()
+            };
+            await set(userRef, newUserData);
+            userData = newUserData;
+          }
+          
+          // Actualizar el estado del usuario
+          setUser({
+            ...user,
+            displayName,
+            isAdmin: isUserAdmin,
+            isVerified: userData.isVerified || false
+          });
+          
+          // Actualizar el estado de verificación
+          setIsAdmin(isUserAdmin);
+          
+          // Verificar si el usuario está verificado (excepto admin)
+          if (!isUserAdmin && user.emailVerified === false) {
+            console.log('Usuario no verificado, mostrando vista de espera');
+            setIsUserVerified(false);
+          } else {
+            setIsUserVerified(true);
+          }
+        } catch (error) {
+          console.error('Error en la autenticación:', error);
+          setUser(null);
+          setIsAdmin(false);
+          setIsUserVerified(false);
+          return; // Salir si hay un error
+        }
         
         // Guardar/actualizar datos del usuario en la base de datos en tiempo real
         try {
@@ -221,21 +290,28 @@ function DictionaryLogic() {
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       
-      await updateProfile(userCredential.user, { displayName });
+      // Asegurarse de que el displayName se guarde en el perfil de autenticación
+      await updateProfile(userCredential.user, { 
+        displayName: displayName.trim() 
+      });
       
+      // Actualizar el perfil en la base de datos en tiempo real
       const userRef = ref(database, `users/${userCredential.user.uid}`);
-      await set(userRef, {
+      const userData = {
         uid: userCredential.user.uid,
-        displayName: displayName,
+        displayName: displayName.trim(),
         email: email,
         isVerified: false,
         createdAt: Date.now(),
         lastLogin: Date.now()
-      });
+      };
       
+      await set(userRef, userData);
+      
+      // Actualizar el estado local
       setUser({
         ...userCredential.user,
-        displayName: displayName
+        displayName: displayName.trim()
       });
 
       toast.success('Registro exitoso. ¡Bienvenido!', { transition: Bounce });
@@ -321,15 +397,44 @@ function DictionaryLogic() {
           throw new Error('No hay usuario autenticado');
         }
         
+        // Obtener el displayName del usuario autenticado
+        // Primero intentamos obtenerlo del perfil de autenticación
+        let displayName = currentUser.displayName || '';
+        
+        // Si no hay displayName, intentamos obtenerlo de la base de datos
+        if (!displayName) {
+          const userRef = ref(database, `users/${currentUser.uid}`);
+          const userSnapshot = await get(userRef);
+          
+          if (userSnapshot.exists()) {
+            const userData = userSnapshot.val();
+            displayName = userData.displayName || '';
+          }
+        }
+        
+        // Asegurarse de que el displayName no sea un correo electrónico
+        if (displayName.includes('@')) {
+          displayName = displayName.split('@')[0];
+        }
+        
+        // Si aún no hay displayName, usamos 'Usuario' como valor por defecto
+        displayName = displayName.trim() || 'Usuario';
+        
+        // Si estamos editando, mantener los datos originales de quién lo creó
+        const isEditing = !!editingId;
+        const originalWord = isEditing ? words.find(w => w.id === editingId) : null;
+        
         const wordData = {
           word: wordToSave,
           meaning: newMeaning.trim(),
           example: newExample.trim() || null, 
-          timestamp: Date.now(),
+          timestamp: isEditing ? (originalWord?.timestamp || Date.now()) : Date.now(),
           updatedAt: Date.now(),
-          addedBy: currentUser.uid, 
-          addedByName: currentUser.displayName || currentUser.email.split('@')[0],
-          wordLower: wordToSave.toLowerCase() 
+          addedBy: isEditing ? (originalWord?.addedBy || currentUser.uid) : currentUser.uid,
+          addedByName: isEditing ? (originalWord?.addedByName || displayName) : displayName,
+          modifiedBy: currentUser.uid,
+          modifiedByName: displayName,
+          wordLower: wordToSave.toLowerCase()
         };
 
         if (editingId) {
@@ -399,19 +504,10 @@ function DictionaryLogic() {
     </div>
   );
 
-  // Memoizar componentes del Header y Searchbar
-  const MemoizedSearchBar = useMemo(() => (
-    <div className="relative">
-      <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-      <input
-        type="text"
-        placeholder="Buscar palabra..."
-        value={searchTerm}
-        onChange={(e) => setSearchTerm(e.target.value)}
-        className="w-full pl-12 pr-4 py-3 sm:py-4 rounded-xl sm:rounded-2xl border-2 border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all shadow-sm hover:shadow-md text-base sm:text-lg"
-      />
-    </div>
-  ), [searchTerm]);
+  // Manejador de búsqueda
+  const handleSearch = (value) => {
+    setSearchTerm(value);
+  };
 
   const MemoizedHeader = useMemo(() => (
     <header className="bg-white/80 shadow-sm sticky top-0 z-10 backdrop-blur-lg">
@@ -490,7 +586,13 @@ function DictionaryLogic() {
       {MemoizedHeader}
 
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-        {MemoizedSearchBar}
+        <div className="w-full max-w-2xl mx-auto">
+          <SearchInput 
+            value={searchTerm}
+            onChange={handleSearch}
+            placeholder="Buscar palabras o significados..."
+          />
+        </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 sm:pb-16">
