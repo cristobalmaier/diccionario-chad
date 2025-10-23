@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ref, onValue, update, remove } from 'firebase/database';
-import { database } from '../../firebase';
+import { ref, onValue, update, remove, query, orderByChild, equalTo, get } from 'firebase/database';
+import { database, auth } from '../../firebase';
+import { deleteUser as deleteAuthUser } from 'firebase/auth';
 import { toast } from 'react-toastify';
 import { 
   Shield, 
@@ -12,7 +13,8 @@ import {
   Search,
   Filter,
   Clock,
-  Hash
+  Hash,
+  Pencil
 } from 'lucide-react';
 
 export default function UserManagement() {
@@ -20,6 +22,8 @@ export default function UserManagement() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all'); // all, verified, unverified
+  const [editingUserId, setEditingUserId] = useState(null);
+  const [editedName, setEditedName] = useState('');
 
   // Cargar todos los usuarios
   useEffect(() => {
@@ -54,15 +58,68 @@ export default function UserManagement() {
     }
   };
 
+  const handleNameEdit = async (userId, currentName) => {
+    setEditingUserId(userId);
+    setEditedName(currentName);
+  };
+
+  const saveNameEdit = async (userId) => {
+    if (!editedName.trim()) return;
+    
+    try {
+      const userRef = ref(database, `users/${userId}`);
+      await update(userRef, {
+        displayName: editedName.trim()
+      });
+      toast.success('Nombre actualizado correctamente');
+    } catch (error) {
+      console.error('Error al actualizar el nombre:', error);
+      toast.error('Error al actualizar el nombre');
+    } finally {
+      setEditingUserId(null);
+      setEditedName('');
+    }
+  };
+
+  const handleKeyDown = (e, userId) => {
+    if (e.key === 'Enter') {
+      saveNameEdit(userId);
+    } else if (e.key === 'Escape') {
+      setEditingUserId(null);
+      setEditedName('');
+    }
+  };
+
   const deleteUser = async (userId, userName) => {
     if (window.confirm(`¿Estás seguro de que quieres eliminar al usuario "${userName}"? Esta acción no se puede deshacer.`)) {
       try {
+        // 1. Delete user's data from Realtime Database
         const userRef = ref(database, `users/${userId}`);
         await remove(userRef);
+        
+        // 2. Delete user's words
+        const userWordsRef = ref(database, 'words');
+        const userWordsQuery = query(userWordsRef, orderByChild('addedBy'), equalTo(userId));
+        const snapshot = await get(userWordsQuery);
+        
+        if (snapshot.exists()) {
+          const updates = {};
+          snapshot.forEach((childSnapshot) => {
+            updates[`words/${childSnapshot.key}`] = null;
+          });
+          await update(ref(database), updates);
+        }
+        
+        // 3. Show success message
         toast.success('Usuario eliminado correctamente');
+        
+        // Note: For security reasons, we're not deleting the user from Firebase Authentication here.
+        // In a production environment, you should use a Cloud Function with admin privileges
+        // to properly handle user deletion from Authentication.
+        
       } catch (error) {
-        console.error('Error al eliminar usuario:', error);
-        toast.error('Error al eliminar usuario');
+        console.error('Error al eliminar el usuario:', error);
+        toast.error('Error al eliminar el usuario');
       }
     }
   };
@@ -162,9 +219,34 @@ export default function UserManagement() {
                           <User className="h-5 w-5 text-purple-600" />
                         </div>
                         <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900">
-                            {user.displayName || 'Sin nombre'}
-                          </div>
+                          {editingUserId === user.uid ? (
+                            <div className="flex items-center">
+                              <input
+                                type="text"
+                                value={editedName}
+                                onChange={(e) => setEditedName(e.target.value)}
+                                onKeyDown={(e) => handleKeyDown(e, user.uid)}
+                                onBlur={() => saveNameEdit(user.uid)}
+                                autoFocus
+                                className="text-sm border-b border-gray-300 focus:border-purple-500 focus:outline-none focus:ring-0 px-1 py-0.5 w-40"
+                              />
+                              <button
+                                onClick={() => saveNameEdit(user.uid)}
+                                className="ml-2 text-green-600 hover:text-green-800"
+                                title="Guardar cambios"
+                              >
+                                <CheckCircle className="h-4 w-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div 
+                              className="text-sm font-medium text-gray-900 hover:bg-gray-100 px-2 py-1 rounded cursor-pointer flex items-center group"
+                              onClick={() => handleNameEdit(user.uid, user.displayName || '')}
+                            >
+                              {user.displayName || 'Sin nombre'}
+                              <Pencil className="h-3 w-3 ml-2 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </div>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -189,7 +271,7 @@ export default function UserManagement() {
                           Verificado
                         </span>
                       ) : (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
                           <XCircle className="w-3 h-3 mr-1" />
                           No verificado
                         </span>
@@ -212,30 +294,25 @@ export default function UserManagement() {
                       <div className="flex items-center justify-center gap-2 flex-wrap">
                         <button
                           onClick={() => toggleVerification(user.uid, user.isVerified)}
-                          className={`inline-flex items-center px-4 py-2 border-2 text-xs font-semibold rounded-lg transition-all transform hover:scale-105 ${
+                          className={`inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
                             user.isVerified
-                              ? 'bg-green-500 border-green-600 text-white hover:bg-green-600 shadow-md'
-                              : 'bg-gray-200 border-gray-300 text-gray-700 hover:bg-gray-300'
+                              ? 'text-green-600 hover:bg-green-50'
+                              : 'text-gray-500 hover:bg-gray-50'
                           }`}
+                          title={user.isVerified ? 'Desverificar usuario' : 'Verificar usuario'}
                         >
                           {user.isVerified ? (
-                            <>
-                              <CheckCircle className="h-4 w-4 mr-1.5" />
-                              Verificado
-                            </>
+                            <CheckCircle className="h-4 w-4" />
                           ) : (
-                            <>
-                              <XCircle className="h-4 w-4 mr-1.5" />
-                              No Verificado
-                            </>
+                            <XCircle className="h-4 w-4" />
                           )}
                         </button>
                         <button
                           onClick={() => deleteUser(user.uid, user.displayName || user.email)}
-                          className="inline-flex items-center px-3 py-2 bg-red-600 text-white text-xs font-medium rounded-lg hover:bg-red-700 transition-all transform hover:scale-105 shadow-md"
+                          className="inline-flex items-center px-2.5 py-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                          title="Eliminar usuario"
                         >
-                          <Trash2 className="h-4 w-4 mr-1" />
-                          Eliminar
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
                     </td>

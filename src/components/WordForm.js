@@ -105,9 +105,8 @@ const WordForm = memo(({
           )}
         </button>
         <p className="mt-3 text-xs text-gray-500 text-center">
-          <span className="block sm:inline">* Campos obligatorios</span>
-          <span className="hidden sm:inline"> | </span>
-          <span className="block sm:inline">Presiona <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-200 rounded text-xs font-mono">Ctrl + Enter</kbd> para guardar</span>
+          <span className="block sm:inline text-red-500">* </span>
+          <span className="hidden sm:inline"> Campos obligatorios </span>
         </p>
       </div>
     </div>

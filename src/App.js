@@ -1,40 +1,73 @@
-import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense, useRef } from 'react';
-// Importamos BrowserRouter para usarlo como componente principal
-import { BrowserRouter, Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom'; 
-import { AlertTriangle, BookOpen, Plus, LogOut, XCircle, Shield, Search, Trash2 } from 'lucide-react';
-import SearchInput from './components/SearchInput';
-import DeleteConfirmationModal from './components/DeleteConfirmationModal';
+import React, { 
+  useState, 
+  useEffect, 
+  useCallback, 
+  useMemo, 
+  lazy, 
+  Suspense, 
+  useRef,
+  useDeferredValue,
+  startTransition
+} from 'react';
 import { 
-  auth, 
-  database, 
+  BrowserRouter, 
+  Routes, 
+  Route, 
+  Navigate, 
+  Link, 
+  useNavigate 
+} from 'react-router-dom'; 
+import { 
+  BookOpen, 
+  Plus, 
+  LogOut, 
+  XCircle, 
+  Shield, 
+  Search,
+  AlertTriangle,
+  Star,
+  MessageCircle 
+} from 'lucide-react';
+import { toast, Bounce } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+
+// Firebase imports with tree-shaking
+import { auth, database } from './firebase';
+import { 
   ref, 
+  query, 
+  orderByChild, 
+  limitToLast,
   onValue, 
   off, 
   set, 
   remove, 
-  query, 
-  orderByChild, 
-  startAt, 
-  endAt, 
   update, 
   push, 
   onChildAdded,
-  signOut,
-  onAuthStateChanged,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
   get
-} from './firebase';
-import { updateProfile } from 'firebase/auth';
-import { toast, Bounce } from 'react-toastify'; 
-import 'react-toastify/dist/ReactToastify.css';
+} from 'firebase/database';
+import { 
+  signOut, 
+  onAuthStateChanged, 
+  updateProfile,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword
+} from 'firebase/auth';
 
-// Componentes cargados bajo demanda con prefetching
-const Auth = lazy(() => import('./components/auth/Auth'));
+// Lazy load components with prefetching
+const SearchInput = React.memo(lazy(() => 
+  import(/* webpackPrefetch: true */ './components/SearchInput')
+));
+const DeleteConfirmationModal = React.memo(lazy(() => 
+  import(/* webpackPrefetch: true */ './components/DeleteConfirmationModal')
+));
+const Auth = lazy(() => import(/* webpackPrefetch: true */ './components/auth/Auth'));
 const WordCard = lazy(() => import(/* webpackPrefetch: true */ './components/WordCard'));
 const WordForm = lazy(() => import(/* webpackPrefetch: true */ './components/WordForm'));
 const AdminDashboard = lazy(() => import(/* webpackPrefetch: true */ './components/admin/AdminDashboard'));
 const WaitingVerification = lazy(() => import(/* webpackPrefetch: true */ './components/auth/WaitingVerification'));
+const FeedbackButton = lazy(() => import('./components/FeedbackButton'));
 
 // Error Boundary (Componente de clase)
 class ErrorBoundary extends React.Component {
@@ -87,8 +120,13 @@ const useDebounce = (value, delay) => {
 };
 
 // Componente principal de la aplicación (Contiene toda la lógica y las rutas)
+// Memoized components to prevent unnecessary re-renders
+const MemoizedSearchInput = React.memo(SearchInput);
+const MemoizedDeleteModal = React.memo(DeleteConfirmationModal);
+
 function DictionaryLogic() {
-  const [words, setWords] = useState([]);
+  // State with initial values to prevent undefined
+  const [words, setWords] = useState(() => []);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [deleteModal, setDeleteModal] = useState({
@@ -352,28 +390,79 @@ function DictionaryLogic() {
   
   useEffect(() => {
     if (!authChecked) return;
-
-    const wordsRef = ref(database, 'words');
-    let queryRef = wordsRef;
     
-    const updateListener = onValue(queryRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const wordsArray = Object.entries(data).map(([id, wordData]) => ({
-          id,
-          ...wordData
-        }));
-        setWords(wordsArray); 
-      } else {
-        setWords([]);
+    const wordsRef = ref(database, 'words');
+    // Add limit and order for better performance
+    // Sort words alphabetically by the 'word' field
+    const wordsQuery = query(
+      wordsRef,
+      orderByChild('wordLower') // Ensure we sort by lowercase for case-insensitive sorting
+    );
+    
+    const listener = onValue(wordsQuery, (snapshot) => {
+      // Use startTransition for non-urgent state updates
+      startTransition(() => {
+        const data = snapshot.val();
+        if (data) {
+          const wordsArray = Object.entries(data)
+            .map(([id, wordData]) => ({
+              id,
+              isFavorite: wordData.isFavorite || false,
+              ...wordData
+            }))
+            .sort((a, b) => {
+              // Sort favorites first, then alphabetically
+              if (a.isFavorite && !b.isFavorite) return -1;
+              if (!a.isFavorite && b.isFavorite) return 1;
+              
+              // If both are favorites or both are not, sort alphabetically
+              const wordA = (a.wordLower || a.word || '').toLowerCase();
+              const wordB = (b.wordLower || b.word || '').toLowerCase();
+              return wordA.localeCompare(wordB);
+            });
+          setWords(wordsArray); 
+        } else {
+          setWords([]);
+        }
+        setIsLoading(false);
+      });
+    }, {
+      // Only fetch the data once to reduce bandwidth
+      onlyOnce: false,
+      // Add error handler
+      onError: (error) => {
+        console.error('Error fetching words:', error);
+        setIsLoading(false);
       }
-      setIsLoading(false);
     });
 
+    // Cleanup function
     return () => {
-      off(queryRef, 'value', updateListener);
+      off(wordsQuery, 'value', listener);
     };
   }, [authChecked]); 
+
+  // Toggle favorite status
+  const toggleFavorite = useCallback(async (wordId, currentStatus) => {
+    try {
+      const wordRef = ref(database, `words/${wordId}`);
+      await update(wordRef, { 
+        isFavorite: !currentStatus,
+        updatedAt: Date.now()
+      });
+      toast.success(`Palabra ${!currentStatus ? 'agregada a' : 'quitada de'} favoritos`, {
+        position: "top-right",
+        autoClose: 2000,
+        hideProgressBar: true,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+      });
+    } catch (error) {
+      console.error('Error updating favorite status:', error);
+      toast.error('Error al actualizar favoritos');
+    }
+  }, []);
 
   const handleAddWord = useCallback(async () => {
     if (newWord.trim() && newMeaning.trim() && user) { 
@@ -630,17 +719,26 @@ function DictionaryLogic() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 w-full">
               {filteredWords.map((item, index) => (
                 <ErrorBoundary key={item.id}>
-                  <WordCard 
-                    item={item} 
-                    onEdit={memoizedHandlers.current.handleEditWord} 
-                    onDelete={memoizedHandlers.current.handleDeleteClick}
-                    userIsAdmin={isAdmin} 
-                    currentUserId={user?.uid} 
-                    style={{ 
-                      animation: `fadeInUp 0.5s ease-out ${Math.min(index * 0.05, 0.5)}s both`,
-                      willChange: 'transform, opacity'
-                    }}
-                  />
+                  <div className="relative group">
+                    <WordCard 
+                      item={item} 
+                      onEdit={memoizedHandlers.current.handleEditWord} 
+                      onDelete={memoizedHandlers.current.handleDeleteClick}
+                      userIsAdmin={isAdmin} 
+                      currentUserId={user?.uid} 
+                      style={{ 
+                        animation: `fadeInUp 0.5s ease-out ${Math.min(index * 0.05, 0.5)}s both`,
+                        willChange: 'transform, opacity'
+                      }}
+                    />
+                    <button
+                      onClick={() => toggleFavorite(item.id, item.isFavorite)}
+                      className={`absolute top-2 right-2 p-1.5 rounded-full ${item.isFavorite ? 'text-yellow-400' : 'text-gray-300 hover:text-yellow-400'} bg-white/80 backdrop-blur-sm transition-colors`}
+                      aria-label={item.isFavorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}
+                    >
+                      <Star className="w-5 h-5" fill={item.isFavorite ? 'currentColor' : 'none'} />
+                    </button>
+                  </div>
                 </ErrorBoundary>
               ))}
             </div>
@@ -781,6 +879,11 @@ function DictionaryLogic() {
             to { opacity: 1; transform: scale(1); }
           }
         `}</style>
+        {user && (
+          <Suspense fallback={null}>
+            <FeedbackButton />
+          </Suspense>
+        )}
       </ErrorBoundary>
     </div>
   );

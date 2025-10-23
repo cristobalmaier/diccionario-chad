@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue, query, orderByChild } from 'firebase/database';
 import { database } from '../../firebase';
 import { 
   Shield, 
@@ -10,7 +10,8 @@ import {
   LogOut,
   Home,
   UserCheck,
-  FileText
+  FileText,
+  MessageCircle
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
@@ -20,6 +21,7 @@ import { toast } from 'react-toastify';
 // Componentes de las diferentes secciones
 import UserManagement from './UserManagement';
 import WordManagement from './WordManagement';
+import FeedbackManagement from './FeedbackManagement';
 
 export default function AdminDashboard({ user }) {
   const [activeTab, setActiveTab] = useState('overview');
@@ -27,7 +29,8 @@ export default function AdminDashboard({ user }) {
     totalWords: 0,
     totalUsers: 0,
     verifiedUsers: 0,
-    recentWords: []
+    recentWords: [],
+    unreadFeedback: 0
   });
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
@@ -59,19 +62,35 @@ export default function AdminDashboard({ user }) {
     const unsubscribeUsers = onValue(usersRef, (snapshot) => {
       const usersData = snapshot.val() || {};
       const usersArray = Object.values(usersData);
-      const verifiedCount = usersArray.filter(u => u.isVerified).length;
-
+      
+      const verifiedCount = usersArray.filter(user => user.isVerified).length;
+      
       setStats(prev => ({
         ...prev,
         totalUsers: usersArray.length,
         verifiedUsers: verifiedCount
       }));
-      setLoading(false);
     });
+
+    // Cargar comentarios no leídos
+    const feedbackRef = query(ref(database, 'feedback'), orderByChild('read'));
+    const unsubscribeFeedback = onValue(feedbackRef, (snapshot) => {
+      const feedbacks = snapshot.val() || {};
+      const unreadCount = Object.values(feedbacks).filter(fb => !fb.read).length;
+      
+      setStats(prev => ({
+        ...prev,
+        unreadFeedback: unreadCount
+      }));
+    });
+
+    setLoading(false);
 
     return () => {
       unsubscribeWords();
       unsubscribeUsers();
+      unsubscribeFeedback();
+      if (unsubscribeFeedback) unsubscribeFeedback();
     };
   }, []);
 
@@ -167,6 +186,20 @@ export default function AdminDashboard({ user }) {
               <BookOpen className="w-5 h-5" />
               <span className="hidden sm:inline">Palabras</span>
             </button>
+            <button
+              onClick={() => setActiveTab('feedback')}
+              className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 font-medium transition-colors ${
+                activeTab === 'feedback'
+                  ? 'bg-purple-50 text-purple-700 border-b-2 border-purple-600'
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <MessageCircle className="w-5 h-5" />
+              <span className="hidden sm:inline">Comentarios</span>
+              <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                {stats.unreadFeedback || 0}
+              </span>
+            </button>
           </div>
         </div>
 
@@ -241,6 +274,7 @@ export default function AdminDashboard({ user }) {
 
         {activeTab === 'users' && <UserManagement />}
         {activeTab === 'words' && <WordManagement />}
+        {activeTab === 'feedback' && <FeedbackManagement />}
       </div>
     </div>
   );
